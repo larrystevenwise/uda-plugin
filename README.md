@@ -1,7 +1,7 @@
 # uda-plugin
 Automatically exported from code.google.com/p/uda-plugin
 
-This git repo contans an export of code.google.com/p/uda-plugin with changes added to support cxgb4/iWARP.
+This git repo contains an export of code.google.com/p/uda-plugin with changes added to support cxgb4/iWARP.
 
 To build the libuda rpm:
 cd <pathto>/uda-plugin/build
