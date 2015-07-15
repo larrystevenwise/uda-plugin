@@ -77,7 +77,7 @@ static void client_comp_ibv_recv(netlev_wqe_t *wqe)
 		ibv_sge sg ;
 		bool send_signal = !(conn->sent_counter%SIGNAL_INTERVAL);
 		conn->sent_counter++;
-		init_wqe_send(&send_wr, &sg, &h_back, len, send_signal, back->context);
+		init_wqe_send(&send_wr, &sg, &h_back, len, send_signal, back->context, conn);
 
 		conn->credits--;
 
@@ -113,7 +113,8 @@ static void client_comp_ibv_recv(netlev_wqe_t *wqe)
 				__FILE__,__LINE__);
 	}
 	pthread_mutex_lock(&conn->lock);
-	conn->returning++;
+	if (h->type != MSG_NOOP)
+		conn->returning++;
 	pthread_mutex_unlock(&conn->lock);
 
 	/* Send a no_op for credit flow */

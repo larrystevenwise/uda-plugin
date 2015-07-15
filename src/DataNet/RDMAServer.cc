@@ -75,8 +75,9 @@ static void server_comp_ibv_recv(netlev_wqe_t *wqe)
 		int len = sizeof(netlev_msg_t)-(NETLEV_FETCH_REQSIZE-back->len);
 		struct ibv_send_wr send_wr;
 		ibv_sge sg ;
-		init_wqe_send(&send_wr, &sg, &h_back, len, 1, back->context);
+		init_wqe_send(&send_wr, &sg, &h_back, len, 1, back->context, conn);
 
+                conn->sent_counter++;  
 		conn->credits--;
 
 		log(lsTRACE, "removing message from backlog");
@@ -125,14 +126,15 @@ static void server_comp_ibv_recv(netlev_wqe_t *wqe)
 	}
 
 	pthread_mutex_lock(&conn->lock);
-	conn->returning ++;
+	if (h->type != MSG_NOOP)
+		conn->returning ++;
 	pthread_mutex_unlock(&conn->lock);
 
 	/* Send a no_op for credit flow */
-	if (conn->returning >= (conn->peerinfo.credits >> 1)) {
+	/* if (conn->returning >= (conn->peerinfo.credits >> 1)) {
 		netlev_msg_t h;
 		netlev_post_send(&h,  0, 0, NULL, conn, MSG_NOOP);
-	}
+	} */
 }
 
 static void delete_connection(struct netlev_ctx *ctx, struct netlev_conn *conn)
@@ -580,17 +582,23 @@ int RdmaServer::rdma_write_mof_send_ack(struct shuffle_req *req, uintptr_t laddr
 			h.type = MSG_RTS;
 			h.tot_len = ack_msg_len;
 			h.src_req = req->freq ? req->freq : 0;
-			init_wqe_send(&send_wr_ack, &sge_ack, &h, total_ack_len, 1, chunk); //signal each time, to release the chunk
-
-			h.credits = conn->returning;
-			conn->returning = 0;
-			conn->credits--;
+ 			if (conn->returning > 0) {
+                                h.credits = 1;
+                                conn->returning --;
+                        } else {
+                                h.credits = 0;
+                                conn->returning = 0;
+                        }
+			init_wqe_send(&send_wr_ack, &sge_ack, &h, total_ack_len, 1, chunk, conn); //signal each time, to release the chunk
 
 			if ((rc = ibv_post_send(conn->qp_hndl, &send_wr_rdma, &bad_wr)) != 0) {
 				log(lsERROR, "ibv_post_send of rdma_write&send ack failed. error: errno=%d", rc);
 				pthread_mutex_unlock(&conn->lock);
 				return -1;
 			}
+			conn->credits--;
+			conn->sent_counter += 2;
+
 			log(lsTRACE, "After ibv_post_send. JOBID=%s, REDUCEID=%d, MAPID=%s, MAP_OFFSET=%lld, CONN(conn=%p CREDIT=%d RETURNING=%d) ", req->m_jobid.c_str(), req->reduceID , req->m_map.c_str(),  req->map_offset, conn, conn->credits, conn->returning );
 			pthread_mutex_unlock(&conn->lock);
 			return 0;
@@ -607,6 +615,8 @@ int RdmaServer::rdma_write_mof_send_ack(struct shuffle_req *req, uintptr_t laddr
 			//save as backlog
 			netlev_msg_backlog_t *back = init_backlog_data(MSG_RTS, ack_msg_len, req->freq, chunk, h.msg);
 			list_add_tail(&back->list, &conn->backlog);
+
+			conn->sent_counter ++;
 
 			if ((rc = ibv_post_send(conn->qp_hndl, &send_wr_rdma, &bad_wr)) != 0) {
 				log(lsERROR, "ServerConn: RDMA Post Failed, with rc=%d", rc);

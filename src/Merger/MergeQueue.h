@@ -287,9 +287,9 @@ public:
     PriorityQueue<T> core_queue;
     T min_segment;
 public: 
-	#if LCOV_HYBRID_MERGE_DEAD_CODE
+	// #if LCOV_HYBRID_MERGE_DEAD_CODE
     	size_t getQueueSize() { return num_of_segments; }
-	#endif
+	// #endif
 
     virtual ~MergeQueue(){}
     int        mergeq_flag;  /* flag to check the former k,v */

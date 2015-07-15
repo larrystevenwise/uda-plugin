@@ -91,6 +91,10 @@ int MOFSupplier_main(int argc, char *argv[]) throw (UdaException*)
     struct netlev_option op;
     memset(&op, 0, sizeof(netlev_option_t));
     ret = parse_options(argc, argv, &op);
+    if (ret) {
+	log(lsERROR, "MOFSupplier_main: parse options error");
+	return -EIO;
+    }
     
     startLogMOFSupplier();
     

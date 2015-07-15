@@ -64,8 +64,8 @@ struct shuffle_req;
 
 typedef struct netlev_msg {
 	uint8_t   type;
-	uint8_t   credits;  /* credits to the peer */
-	uint16_t  padding;
+	uint8_t  padding;
+	uint16_t   credits;  /* credits to the peer */
 	uint32_t  tot_len;  /* reserved for matching */
 	uint64_t  src_req;  /* for fast lookup of request: server will use it to pass pointer to the original request */
 	char  msg[NETLEV_FETCH_REQSIZE];
@@ -149,6 +149,8 @@ typedef struct netlev_conn
 	uint32_t			sent_counter;
 	bool				bad_conn;
 	uint32_t			received_counter; //used by server to track requests received from this connection
+	uint32_t	sq_depth;
+	uint32_t	max_inline_data;
 } netlev_conn_t;
 
 int netlev_dealloc_mem(struct netlev_dev *dev, netlev_mem_t *mem);
@@ -172,7 +174,7 @@ void init_wqe_rdmaw(struct ibv_send_wr *send_wr, struct ibv_sge *sg, int len,
 		void *raddr, uint32_t rkey, struct ibv_send_wr *next_wr);
 
 void init_wqe_send(ibv_send_wr *send_wr,ibv_sge *sg, netlev_msg_t *h, unsigned int len,
-		bool send_signal, void* context);
+		bool send_signal, void* context, netlev_conn_t *conn);
 void init_wqe_recv(netlev_wqe_t *wqe, unsigned int len,
 		uint32_t lkey, netlev_conn_t *conn);
 

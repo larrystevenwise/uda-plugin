@@ -32,7 +32,7 @@ using namespace std;
 
 
 int netlev_dbg_flag = 0;
-uint32_t wqes_perconn = 256;
+uint32_t wqes_perconn = 250;
 
 
 /* merger state machine */
@@ -46,6 +46,10 @@ int MergeManager_main(int argc, char* argv[])  throw (UdaException*)
 	int  ret;
     struct netlev_option op;
     ret = parse_options(argc, argv, &op);
+    if (ret) {
+	log(lsERROR, " MergeManager_main: parse option error");
+	return -EIO;
+    } 
 
     startLogNetMerger();
 
