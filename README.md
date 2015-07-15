@@ -5,7 +5,7 @@ This git repo contains an export of code.google.com/p/uda-plugin with changes ad
 
 To build the libuda rpm:
 <pre>
-cd <pathto>/uda-plugin/build
+cd path-to/uda-plugin/build
 QA_RPATHS=1 ./buildrpm.sh
 </pre>
 
