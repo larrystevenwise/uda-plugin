@@ -32,7 +32,7 @@ using namespace std;
 
 
 int netlev_dbg_flag = 0;
-uint32_t wqes_perconn = 250;
+uint32_t wqes_perconn = 1000;
 
 
 /* merger state machine */
