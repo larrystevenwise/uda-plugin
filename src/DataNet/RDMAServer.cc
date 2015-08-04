@@ -153,18 +153,19 @@ static void server_cq_handler(progress_event_t *pevent, void *data)
 	struct ibv_wc desc;
 	netlev_wqe_t *wqe = NULL;
 	struct netlev_dev *dev = (netlev_dev_t *)data;
-
+	struct ibv_cq *cq;
 	void *ctx;
-	if (ibv_get_cq_event(dev->cq_channel, &dev->cq, &ctx) != 0) {
+
+	if (ibv_get_cq_event(dev->cq_channel, &cq, &ctx) != 0) {
 		log(lsERROR, "notification, but no CQ event");
 		goto error_event;
 	}
 
-	ibv_ack_cq_events(dev->cq, 1);
+	ibv_ack_cq_events(cq, 1);
 
 
 	do {
-		ne = ibv_poll_cq(dev->cq, 1, &desc);
+		ne = ibv_poll_cq(cq, 1, &desc);
 
 		if ( ne < 0) {
 			log(lsERROR, "ibv_poll_cq failed ne=%d, (errno=%d %m)", ne, errno);
@@ -242,7 +243,7 @@ static void server_cq_handler(progress_event_t *pevent, void *data)
 	} while (ne);
 
 error_event:
-	if (ibv_req_notify_cq(dev->cq, 0)) {
+	if (ibv_req_notify_cq(cq, 0)) {
 		log(lsERROR, "ibv_req_notify_cq failed");
 	}
 	return;

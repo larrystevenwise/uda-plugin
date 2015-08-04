@@ -291,10 +291,6 @@ error_dev:
 
 int netlev_dev_release(struct netlev_dev *dev)
 {
-	if (ibv_destroy_cq(dev->cq)){
-		log(lsERROR,"ibv_destroy_cq failed (errno=%d)", errno);
-		return -1;
-	}
 	if (ibv_destroy_comp_channel(dev->cq_channel)){
 		log(lsERROR,"ibv_destroy_comp_channel failed (errno=%d)", errno);
 		return -1;
@@ -314,7 +310,6 @@ int netlev_dev_release(struct netlev_dev *dev)
 int netlev_dev_init(struct netlev_dev *dev)
 {
 	struct ibv_device_attr device_attr;
-	int cqe_num, max_sge;
 
 	log(lsTRACE, "calling ibv_fork_init");
 	int ret = ibv_fork_init(); // FORK SAFE  
@@ -331,16 +326,6 @@ int netlev_dev_init(struct netlev_dev *dev)
 		return -1;
 	}
 
-	if (ibv_query_device(dev->ibv_ctx, &device_attr) != 0) {
-		log(lsERROR, "ibv_query_device failed");
-		throw new UdaException("ibv_query_device failed");
-		return -1;
-	}
-
-        cqe_num = wqes_perconn + 2*wqes_perconn + 1024;
-        cqe_num = (cqe_num > device_attr.max_cqe) ? device_attr.max_cqe : cqe_num; //taking the minimum
-	max_sge = device_attr.max_sge;
-
 	dev->cq_channel = ibv_create_comp_channel(dev->ibv_ctx);
 	if (!dev->cq_channel) {
 		log(lsERROR, "ibv_create_comp_channel failed");
@@ -348,24 +333,16 @@ int netlev_dev_init(struct netlev_dev *dev)
 		return -1;
 	}
 
-	dev->cq = ibv_create_cq(dev->ibv_ctx, cqe_num, NULL, dev->cq_channel, 0);
-	if (!dev->cq) {
-		log(lsERROR, "ibv_create_cq failed");
-		throw new UdaException("ibv_create_cq failed");
-		return -1;
-	}
-	log (lsDEBUG, "device_attr.max_cqe is %d, cqe_num is %d, actual cqe is %d, ", device_attr.max_cqe, cqe_num, dev->cq->cqe);
 
-	if (ibv_req_notify_cq(dev->cq, 0) != 0) {
-		log(lsERROR, "ibv_req_notify failed");
-		throw new UdaException("ibv_req_notify failed");
+	if (ibv_query_device(dev->ibv_ctx, &device_attr) != 0) {
+		log(lsERROR, "ibv_query_device failed");
+		throw new UdaException("ibv_query_device failed");
 		return -1;
 	}
 
-	log (lsDEBUG, "device_attr.max_sge is %d, device_attr.max_sge_rd is %d, ", device_attr.max_sge, device_attr.max_sge_rd);
-
-	dev->max_sge = max_sge;
-	dev->cqe_num = cqe_num;
+	log (lsDEBUG, "device_attr.max_cqe %d, max_sge %d, ", device_attr.max_cqe, device_attr.max_sge);
+	dev->max_sge = device_attr.max_sge;
+	dev->max_cqe = device_attr.max_cqe;
 	log(lsINFO, "Successfully init'ed device");
 	return 0;
 }
@@ -384,6 +361,8 @@ struct netlev_dev* netlev_dev_find(struct rdma_cm_id *cm_id, list_head_t *head)
 
 void netlev_conn_free(netlev_conn_t *conn)
 {
+	struct ibv_wc wc;
+
 	pthread_mutex_lock(&conn->lock);
 	while (!list_empty(&conn->backlog)) {
 		netlev_msg_backlog_t *back = list_entry(conn->backlog.next, typeof(*back), list);
@@ -395,6 +374,13 @@ void netlev_conn_free(netlev_conn_t *conn)
 	rdma_destroy_qp(conn->cm_id);
 	if (rdma_destroy_id(conn->cm_id)){
 		log(lsERROR, "rdma_destroy_qp failed (errno=%d)", errno);
+	}
+
+	/* Draing the CQ before destroying */
+	while (ibv_poll_cq(conn->cq, 1, &wc) > 0);
+
+	if (ibv_destroy_cq(conn->cq)) {
+		log(lsERROR, "ibv_destroy_cq failed (errno=%d)", errno);
 	}
 	pthread_mutex_destroy(&conn->lock);
 	netlev_dealloc_conn_mem(conn->mem);
@@ -408,6 +394,8 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 	struct ibv_recv_wr *bad_wr;
 	struct ibv_qp_init_attr qp_init_attr;
 	struct ibv_qp_attr qp_attr;
+	uint32_t cqe_num;
+	bool wqes_reduced = false;
 
 	conn = (netlev_conn_t*) calloc(1, sizeof(netlev_conn_t));
 	if (!conn) {
@@ -435,9 +423,31 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 		return NULL;
 	}
 
+        cqe_num = wqes_perconn + 2*wqes_perconn;
+	while (cqe_num > dev->max_cqe) {
+		wqes_reduced = true;
+		wqes_perconn--;
+		cqe_num = wqes_perconn + 2*wqes_perconn + 1024;
+	}
+	if (wqes_reduced) {
+		log(lsWARN, "wqes_perconn reduced to %d due to device max_cqe limit. "
+			    " Avoid this warning by changing mapred.rdma.wqe.per.conn\n", wqes_perconn);
+	}
+
+	conn->cq = ibv_create_cq(dev->ibv_ctx, cqe_num, NULL, dev->cq_channel, 0);
+	if (!conn->cq) {
+		throw new UdaException("ibv_create_cq failed");
+	}
+
+	if (ibv_req_notify_cq(conn->cq, 0) != 0) {
+		throw new UdaException("ibv_req_notify failed");
+	}
+
+	log (lsDEBUG, "CQ created with num_cqe %d\n", cqe_num);
+
 	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
-	qp_init_attr.send_cq  = dev->cq;
-	qp_init_attr.recv_cq  = dev->cq;
+	qp_init_attr.send_cq  = conn->cq;
+	qp_init_attr.recv_cq  = conn->cq;
 	qp_init_attr.cap.max_send_wr  = wqes_perconn*2; //on server side 2 wqes are sent for each wqe received from client
 	qp_init_attr.cap.max_recv_wr  = wqes_perconn;
 	qp_init_attr.cap.max_send_sge = 1; /* 28 is the limit, the code only used 1 */

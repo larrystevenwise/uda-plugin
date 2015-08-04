@@ -112,13 +112,12 @@ typedef struct netlev_rdma_mem {
 typedef struct netlev_dev {
 	struct ibv_context       *ibv_ctx;
 	struct ibv_pd            *pd;
-	struct ibv_cq            *cq;
 	struct ibv_comp_channel  *cq_channel;
 	netlev_rdma_mem_t        *rdma_mem;
 
 	struct list_head          list;     /* for device list */
-	uint32_t                  cqe_num;
 	uint32_t                  max_sge;
+	uint32_t                  max_cqe;
 	struct netlev_ctx		  *ctx; 	/* RDMAServer */
 } netlev_dev_t;
 
@@ -134,6 +133,7 @@ typedef struct netlev_conn
 	struct netlev_dev  *dev;
 	struct rdma_cm_id  *cm_id;
 	struct ibv_qp      *qp_hndl;
+	struct ibv_cq      *cq;
 
 	struct list_head    backlog;
 	struct list_head    list;
