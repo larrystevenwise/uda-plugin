@@ -414,6 +414,12 @@ RdmaClient::~RdmaClient()
 	}
 	//DBGPRINT(DBG_CLIENT, "all connections are released\n");
 
+	/* kill event thread before we destroy the cq in netlev_dev_release() */
+	this->helper.stop = 1;
+	pthread_attr_destroy(&this->helper.attr);
+	pthread_join(this->helper.thread, NULL); log(lsDEBUG, "THREAD JOINED");
+	//DBGPRINT(DBG_CLIENT, "RDMAClient is shut down \n");
+
 	/* release all device */
 	while(!list_empty(&this->ctx.hdr_dev_list)) {
 		dev = list_entry(this->ctx.hdr_dev_list.next, typeof(*dev), list);
@@ -424,11 +430,6 @@ RdmaClient::~RdmaClient()
 		free(dev);
 	}
 	//DBGPRINT(DBG_CLIENT, "all devices are released\n");
-
-	this->helper.stop = 1;
-	pthread_attr_destroy(&this->helper.attr);
-	pthread_join(this->helper.thread, NULL); log(lsDEBUG, "THREAD JOINED");
-	//DBGPRINT(DBG_CLIENT, "RDMAClient is shut down \n");
 
 	rdma_destroy_event_channel(this->ctx.cm_channel);
 	close(this->ctx.epoll_fd);

@@ -446,6 +446,11 @@ void RdmaServer::stop_server()
 	}
 	log(lsDEBUG, "all connections are released");
 
+	/* kill event thread before we destroy the cq in netlev_dev_release() */
+	this->helper.stop = 1;
+	pthread_attr_destroy(&this->helper.attr);
+	pthread_join(this->helper.thread, &pstatus); log(lsDEBUG, "THREAD JOINED");
+
 	while (!list_empty(&this->ctx.hdr_dev_list)) {
 		dev = list_entry(this->ctx.hdr_dev_list.next, typeof(*dev), list);
 		list_del(&dev->list);
@@ -458,9 +463,6 @@ void RdmaServer::stop_server()
 
 	pthread_mutex_unlock(&this->ctx.lock);
 
-	this->helper.stop = 1;
-	pthread_attr_destroy(&this->helper.attr);
-	pthread_join(this->helper.thread, &pstatus); log(lsDEBUG, "THREAD JOINED");
 	close(this->ctx.epoll_fd);
 	log(lsDEBUG,"RDMA server stopped");
 }
