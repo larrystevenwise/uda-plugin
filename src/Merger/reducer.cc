@@ -101,7 +101,8 @@ void handle_init_msg(hadoop_cmd_t *hadoop_cmd)
 
 	if (shuffleMemorySize <  (long)g_task->merge_man->num_kv_bufs * maxRdmaBufferSize * 2) { // 2 for double buffer
 		int maxRdmaBufferSizeOrig = maxRdmaBufferSize;
-		maxRdmaBufferSize = shuffleMemorySize / (g_task->merge_man->num_kv_bufs * 2);
+		maxRdmaBufferSize = min(8L*1024*1024*1024-1, shuffleMemorySize) / (g_task->merge_man->num_kv_bufs * 2);
+
 		// we still need alignment to pagesize...
 
 		if (maxRdmaBufferSize < minRdmaBuffer) {
