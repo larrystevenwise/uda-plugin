@@ -152,7 +152,7 @@ static void client_cq_handler(progress_event_t *pevent, void *data)
 		if (ne) {
 			if (desc.status != IBV_WC_SUCCESS) {
 				if (desc.status == IBV_WC_WR_FLUSH_ERR) {
-					log(lsERROR,"Operation: %s (%d). Dev %p wr (0x%llx) flush err. quitting...",
+					log(lsDEBUG,"Operation: %s (%d). Dev %p wr (0x%llx) flush err. quitting...",
 							netlev_stropcode(desc.opcode), desc.opcode, dev, (uint64_t)desc.wr_id);
 					goto error_event;
 				} else {
