@@ -405,21 +405,49 @@ RdmaClient::~RdmaClient()
 {
 	struct netlev_conn *conn;
 	struct netlev_dev *dev;
+	int conn_count = 0;
 
-	/* relase all connection */
+	/* disconnect all connections. This causes all the QPs to flush */
+	list_for_each_entry(conn, &this->ctx.hdr_conn_list, list) {
+		log(lsDEBUG,"Client conn->credits is %d", conn->credits);
+
+		/* disconnect to ensure the QP is flushed */
+		rdma_disconnect(conn->cm_id);
+		conn_count++;
+	}
+	log(lsDEBUG, "%d connections are disconnected", conn_count);
+
+	/* wait for conn_count DISCONNECTED events */
+	while (conn_count) {
+		struct rdma_cm_event *cm_event;
+		
+		if (rdma_get_cm_event(this->ctx.cm_channel, &cm_event)) {
+			log(lsERROR, "rdma_get_cm_event failed, (errno=%d %m)",errno);
+			break;
+		}
+		if (cm_event->event != RDMA_CM_EVENT_DISCONNECTED) {
+			log(lsERROR, "Unexpected RDMA_CM event %s (%d), status=%d", rdma_event_str(cm_event->event), cm_event->event, cm_event->status);
+			break;
+		}
+		rdma_ack_cm_event(cm_event);
+		conn_count--;
+	}
+	log(lsDEBUG,"all DISCONNECTED events received/acked");
+
+	/* kill event thread before we destroy the cq in netlev_conn_free() */
+	this->helper.stop = 1;
+	pthread_attr_destroy(&this->helper.attr);
+	pthread_join(this->helper.thread, NULL); log(lsDEBUG, "THREAD JOINED");
+	log(lsDEBUG,"CQ event handler shut down");
+
+	/* free all connections destroying the QPs and CQs */
 	while(!list_empty(&this->ctx.hdr_conn_list)) {
 		conn = list_entry(this->ctx.hdr_conn_list.next, typeof(*conn), list);
 		log(lsDEBUG,"Client conn->credits is %d", conn->credits);
 		list_del(&conn->list);
 		netlev_conn_free(conn);
 	}
-	//DBGPRINT(DBG_CLIENT, "all connections are released\n");
-
-	/* kill event thread before we destroy the cq in netlev_dev_release() */
-	this->helper.stop = 1;
-	pthread_attr_destroy(&this->helper.attr);
-	pthread_join(this->helper.thread, NULL); log(lsDEBUG, "THREAD JOINED");
-	//DBGPRINT(DBG_CLIENT, "RDMAClient is shut down \n");
+	log(lsDEBUG,"all connections are freed");
 
 	/* release all device */
 	while(!list_empty(&this->ctx.hdr_dev_list)) {
@@ -430,11 +458,13 @@ RdmaClient::~RdmaClient()
 		netlev_dev_release(dev);
 		free(dev);
 	}
-	//DBGPRINT(DBG_CLIENT, "all devices are released\n");
+	log(lsDEBUG,"all devices are released/freed");
 
 	rdma_destroy_event_channel(this->ctx.cm_channel);
 	close(this->ctx.epoll_fd);
 	pthread_mutex_destroy(&this->ctx.lock);
+
+	log(lsDEBUG,"RDMAClient destroy complete");
 }
 
 void RdmaClient::register_mem(struct memory_pool *mem_pool, double_buffer_t buffers)
