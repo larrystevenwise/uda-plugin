@@ -212,13 +212,16 @@ void *event_processor(void *context)
 {
     int i, nevents, timeout = RDMA_TIMEOUT * 1000;
     struct epoll_event events[32];
+    int done = 0;
 
     netlev_thread_t *th = (netlev_thread_t *) context;
 
     /* Epoll will poll/wait for 2 seconds before loops again,
      * So a static variable can trigger the thread to complete in 
-     * 2 seconds */
-    while (!th->stop) {
+     * 2 seconds.  Don't exit until told to stop -and- all events
+     * are drained.
+     */
+    while (!done) {
 
         /* Poll events from both main threads and the event channel */
         nevents = epoll_wait(th->pollfd, events, 
@@ -236,8 +239,14 @@ void *event_processor(void *context)
                 pevent->handler(pevent, pevent->data);
             }
         } 
+
+        if (th->stop) {
+            timeout = 0;
+            if (nevents == 0)
+                done = 1;
+        }
     }
-	log(lsINFO, "-------->>>>> event_processor thread stopped <<<<<--------");
+    log(lsINFO, "-------->>>>> event_processor thread stopped <<<<<--------");
     return NULL; //quite the compiler
 }
 
