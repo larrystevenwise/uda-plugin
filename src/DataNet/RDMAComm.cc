@@ -639,6 +639,7 @@ struct netlev_conn* netlev_init_conn(struct rdma_cm_event *event, struct netlev_
 	struct netlev_conn *conn = NULL;
 	struct rdma_conn_param conn_param;
 	struct connreq_data xdata;
+	int ret;
 
 	conn = netlev_conn_alloc(dev, event->id);
 	if (!conn) {
@@ -660,8 +661,9 @@ struct netlev_conn* netlev_init_conn(struct rdma_cm_event *event, struct netlev_
 	conn_param.private_data_len = sizeof(xdata);
 
 	/* accept the connection */
-	if (rdma_accept(conn->cm_id, &conn_param) != 0) {
-		log(lsERROR, "rdma_accept failed");
+	ret = rdma_accept(conn->cm_id, &conn_param);
+	if (ret != 0) {
+		log(lsERROR, "rdma_accept failed ret %d errno %d cm_id %p", ret, errno, conn->cm_id);
 		goto err_rdma_conn;
 	}
 	return conn;

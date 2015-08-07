@@ -273,7 +273,7 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 	switch (cm_event->event) {
 		case RDMA_CM_EVENT_CONNECT_REQUEST:
 		{
-			log(lsDEBUG, "got RDMA_CM_EVENT_CONNECT_REQUEST (on cma_id=%x)", cm_event->id);
+			log(lsINFO, "got RDMA_CM_EVENT_CONNECT_REQUEST (on cma_id=%x)", cm_event->id);
 			dev = netlev_dev_find(cm_event->id, &ctx->hdr_dev_list);
 
 			if (!dev) {
