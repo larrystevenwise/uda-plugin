@@ -199,9 +199,9 @@ static void client_cq_handler(progress_event_t *pevent, void *data)
 			}
 		}
 		loop_count++;
-		if (loop_count > 1000) {
+		if (loop_count > 200) {
 			log(lsDEBUG, "WARN: already handling %d cq events in a single loop", loop_count);
-			loop_count = 0;
+			break;
 		}
 
 	} while (ne);
