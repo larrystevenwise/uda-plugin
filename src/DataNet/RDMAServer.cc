@@ -25,6 +25,8 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
+#include <sys/time.h>
 
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
@@ -165,7 +167,7 @@ static void server_cq_handler(progress_event_t *pevent, void *data)
 
 
 	do {
-		ne = ibv_poll_cq(cq, 1, &desc);
+		ne = (uintptr_t)timeit("ibv_poll_cq", ibv_poll_cq(cq, 1, &desc));
 
 		if ( ne < 0) {
 			log(lsERROR, "ibv_poll_cq failed ne=%d, (errno=%d %m)", ne, errno);
@@ -207,7 +209,7 @@ static void server_cq_handler(progress_event_t *pevent, void *data)
 						chunk_t *chunk = (chunk_t*) (long2ptr(desc.wr_id)); //ptr_type_t is at offset 0 at chunk_t.
 						if (chunk){
 							log(lsTRACE, "got %s cq event: ACK_MSG_COMP chunk=%p", netlev_stropcode(desc.opcode), chunk);
-							state_mac.data_mac->release_chunk(chunk);				
+							timeit_void("release_chunk", state_mac.data_mac->release_chunk(chunk));	
 						}
 						else {
 							log(lsTRACE, "got %s cq event: NOOP_COMP", netlev_stropcode(desc.opcode));
@@ -220,7 +222,7 @@ static void server_cq_handler(progress_event_t *pevent, void *data)
 						wqe = (netlev_wqe_t *) (long2ptr(desc.wr_id));
 						if (wqe) {
 							log(lsTRACE, "got %s cq event. data=%s", netlev_stropcode(desc.opcode), wqe->data);
-							server_comp_ibv_recv(wqe);
+							timeit_void("server_comp_ibv_recv", server_comp_ibv_recv(wqe));
 						}
 						else {
 							log(lsERROR, "got %s cq event with NULL wqe", netlev_stropcode(desc.opcode));
@@ -243,7 +245,7 @@ static void server_cq_handler(progress_event_t *pevent, void *data)
 	} while (ne);
 
 error_event:
-	if (ibv_req_notify_cq(cq, 0)) {
+	if (timeit("ibv_req_notify_cq", ibv_req_notify_cq(cq, 0))) {
 		log(lsERROR, "ibv_req_notify_cq failed");
 	}
 	return;
@@ -264,7 +266,7 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 
 	struct rdma_event_channel *cm_channel = ctx->cm_channel;
 
-	if (rdma_get_cm_event(cm_channel, &cm_event)) {
+	if (timeit("rdma_get_cm_event", rdma_get_cm_event(cm_channel, &cm_event))) {
 		output_stderr("[%s:%d] rdma_get_cm_event err", __FILE__, __LINE__);
 		//TODO: consider throw exception
 		return;
@@ -273,8 +275,11 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 	switch (cm_event->event) {
 		case RDMA_CM_EVENT_CONNECT_REQUEST:
 		{
-			log(lsINFO, "got RDMA_CM_EVENT_CONNECT_REQUEST (on cma_id=%x)", cm_event->id);
-			dev = netlev_dev_find(cm_event->id, &ctx->hdr_dev_list);
+			char p[INET_ADDRSTRLEN];
+			
+			inet_ntop(AF_INET, &cm_event->id->route.addr.dst_sin.sin_addr, p, sizeof p);
+			log(lsINFO, "got RDMA_CM_EVENT_CONNECT_REQUEST (on cma_id=%p from %s:%u)", cm_event->id, p, ntohs(cm_event->id->route.addr.dst_sin.sin_port));
+			dev = (struct netlev_dev *)timeit("netlev_dev_find", netlev_dev_find(cm_event->id, &ctx->hdr_dev_list));
 
 			if (!dev) {
 				log(lsERROR, "device not found");
@@ -310,15 +315,15 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 
 		case RDMA_CM_EVENT_ESTABLISHED:
 		{
-			log(lsDEBUG,"got RDMA_CM_EVENT_ESTABLISHED (on cma_id=%x)", cm_event->id);
-			conn = netlev_conn_established(cm_event, &ctx->hdr_conn_list);
+			log(lsINFO,"got RDMA_CM_EVENT_ESTABLISHED (on cma_id=%p)", cm_event->id);
+			conn = (struct netlev_conn *)timeit("netlev_conn_established", netlev_conn_established(cm_event, &ctx->hdr_conn_list));
 			log(lsDEBUG,"netlev_conn_established returned conn=%p (QPN connection in server is %d)", conn, conn->qp_hndl->qp_num);
 		}
 		break;
 
 		case RDMA_CM_EVENT_DISCONNECTED:
 		{
-			log(lsDEBUG, "got RDMA_CM_EVENT_DISCONNECTED (on cma_id=%x)", cm_event->id);
+			log(lsINFO, "got RDMA_CM_EVENT_DISCONNECTED (on cma_id=%p)", cm_event->id);
 			conn = netlev_conn_find_by_qp(cm_event->id->qp->qp_num, &ctx->hdr_conn_list);
 			log(lsTRACE, "calling rdma_ack_cm_event for event=%d", cm_event->event);
 			ret = rdma_ack_cm_event(cm_event);
@@ -327,7 +332,7 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 			}
 			conn->bad_conn = true;
 			if (!conn->received_counter) {
-				delete_connection(ctx, conn);
+				timeit_void("delete_connection", delete_connection(ctx, conn));
 			}
 		}
 		// don't break here to avoid ack after disconnect
@@ -335,7 +340,7 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 
 		case RDMA_CM_EVENT_TIMEWAIT_EXIT:
 		{
-			log(lsWARN, "got RDMA_CM_EVENT_TIMEWAIT_EXIT (on cma_id=%x)", cm_event->id);
+			log(lsWARN, "got RDMA_CM_EVENT_TIMEWAIT_EXIT (on cma_id=%p)", cm_event->id);
 			// avner: don't bail out
 			// TODO: consider cleanup
 		}
@@ -343,7 +348,7 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 
 		default:
 		{
-			log(lsERROR, "Unhandled RDMA_CM event %s (%d), status=%d (on cma_id=%x)", rdma_event_str(cm_event->event), cm_event->event, cm_event->status, cm_event->id);
+			log(lsERROR, "Unhandled RDMA_CM event %s (%d), status=%d (on cma_id=%p)", rdma_event_str(cm_event->event), cm_event->event, cm_event->status, cm_event->id);
 	#if 0
 			// Disregard the unknown event
 			// not the best but definitely not good to bail out
@@ -426,7 +431,7 @@ void RdmaServer::start_server()
 	uda_thread_create(&th->thread, &th->attr, event_processor, th);
 
 	// mapping and registering memory for all RDMA capable device
-	map_ib_devices(&ctx, server_cq_handler, &rdma_mem, rdma_total_len);
+	map_ib_devices(&ctx, server_cq_handler, &rdma_mem, rdma_total_len, "server_cq_handler");
 }
 
 void RdmaServer::stop_server()
@@ -510,7 +515,7 @@ int RdmaServer::create_listener()
 	netlev_event_add(this->ctx.epoll_fd,
 			this->ctx.cm_id->channel->fd, EPOLLIN,
 			server_cm_handler, this,
-			&this->ctx.hdr_event_list);
+			&this->ctx.hdr_event_list, "server_cm_handler");
 	pthread_mutex_unlock(&this->ctx.lock);
 	return 0;
 

@@ -23,6 +23,7 @@
 #include "LinkList.h"
 #include "UdaBridge.h"  //avnerb - TEMP - will be removed
 #include <limits.h> // for PATH_MAX
+#include <sys/time.h>
 
 #define NETLEV 1
 
@@ -58,6 +59,7 @@ typedef struct progress_event {
     struct list_head    list;
     event_handler_t     handler;
     void               *data;
+    char                handler_name[30];
 } progress_event_t;
 
 typedef struct netlev_thread {
@@ -82,11 +84,36 @@ void dprint(char *s, char *fmt, ...);
 
 int netlev_event_add(int poll_fd, int fd, int events, 
                      event_handler_t handler, void *data, 
-	                 struct list_head *head);
+	                 struct list_head *head, const char *name);
 
 void netlev_event_del(int poll_fd, int fd, struct list_head *head);
 
 void *event_processor(void *context);
+
+#define timeit(s, func) ({ \
+	struct timeval start, stop, delta; \
+	void * ret; \
+	gettimeofday(&start, NULL);  \
+	ret = (void *)(func); \
+	gettimeofday(&stop, NULL); \
+	timersub(&stop, &start, &delta); \
+	if (delta.tv_sec > 30) { \
+		log(lsERROR, "Extra slow function %s - %lu seconds!", (s), delta.tv_sec); \
+	} \
+	ret; \
+})
+
+#define timeit_void(s, func) ({ \
+	struct timeval start, stop, delta; \
+	gettimeofday(&start, NULL);  \
+	(func); \
+	gettimeofday(&stop, NULL); \
+	timersub(&stop, &start, &delta); \
+	if (delta.tv_sec > 30) { \
+		log(lsERROR, "Extra slow function %s - %lu seconds!", (s), delta.tv_sec); \
+	} \
+})
+	
 
 #endif
 

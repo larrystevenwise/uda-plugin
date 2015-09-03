@@ -29,6 +29,7 @@
 #include <rdma/rdma_cma.h>
 #include "RDMAComm.h"
 #include "IOUtility.h"
+#include <sys/time.h>
 
 #ifdef HAVE_INFINIBAND_VERBS_EXP_H
 #include <infiniband/verbs_exp.h>
@@ -153,7 +154,7 @@ int rdma_mem_manager(void **mem, uint64_t total_size, netlev_dev_t *dev)
 	return 0;
 }
 
-int map_ib_devices(netlev_ctx_t* net_ctx, event_handler_t cq_handler, void** rdma_mem_ptr, int64_t rdma_total_len)
+int map_ib_devices(netlev_ctx_t* net_ctx, event_handler_t cq_handler, void** rdma_mem_ptr, int64_t rdma_total_len, const char *name)
 {
 	int n_num_devices = 0;
 	struct ibv_context** pp_ibv_context_list = rdma_get_devices(&n_num_devices);
@@ -168,14 +169,14 @@ int map_ib_devices(netlev_ctx_t* net_ctx, event_handler_t cq_handler, void** rdm
 	}
 	log(lsDEBUG, "Mapping %d ibv devices", n_num_devices);
 	for (int i = 0; i < n_num_devices; i++) {
-		create_dev(pp_ibv_context_list[i], net_ctx, cq_handler,rdma_mem_ptr, rdma_total_len);
+		create_dev(pp_ibv_context_list[i], net_ctx, cq_handler,rdma_mem_ptr, rdma_total_len, name);
 	}
 
 	rdma_free_devices(pp_ibv_context_list);
 	return n_num_devices;
 }
 
-netlev_dev_t* create_dev(struct ibv_context* ibv_ctx, netlev_ctx_t* net_ctx, event_handler_t cq_handler, void** rdma_mem_ptr, int64_t rdma_total_len)
+netlev_dev_t* create_dev(struct ibv_context* ibv_ctx, netlev_ctx_t* net_ctx, event_handler_t cq_handler, void** rdma_mem_ptr, int64_t rdma_total_len, const char *name)
 {
 	int ret = 0;
 	struct netlev_dev* dev = (struct netlev_dev *) malloc(sizeof(struct netlev_dev));
@@ -203,7 +204,7 @@ netlev_dev_t* create_dev(struct ibv_context* ibv_ctx, netlev_ctx_t* net_ctx, eve
 	ret = netlev_event_add(net_ctx->epoll_fd,
 			dev->cq_channel->fd,
 			EPOLLIN, cq_handler,
-			dev, &net_ctx->hdr_event_list);
+			dev, &net_ctx->hdr_event_list, name);
 	if (ret) {
 		log(lsWARN, "netlev_event_add failed");
 		free(dev);
@@ -232,7 +233,7 @@ int netlev_init_conn_mem(struct netlev_conn *conn)
 	log(lsDEBUG, "SIGNAL_INTERVAL=%d", SIGNAL_INTERVAL);
 
 	//alloc dev_mem struct
-	dev_mem = (netlev_mem_t *) malloc(sizeof(netlev_mem_t));
+	dev_mem = (netlev_mem_t *)timeit("malloc", malloc(sizeof(netlev_mem_t)));
 	if (!dev_mem) {
 		log(lsERROR, "malloc failed");
 		goto error_dev;
@@ -240,7 +241,7 @@ int netlev_init_conn_mem(struct netlev_conn *conn)
 	memset(dev_mem, 0, sizeof(struct netlev_mem));
 
 	//alloc wqes
-	wqe_mem = memalign(wqe_align, num_wqes * sizeof(netlev_wqe_t));
+	wqe_mem = timeit("memalign", memalign(wqe_align, num_wqes * sizeof(netlev_wqe_t)));
 	if (!wqe_mem) {
 		log(lsERROR, "memalign failed");
 		goto error_wqe;
@@ -248,7 +249,7 @@ int netlev_init_conn_mem(struct netlev_conn *conn)
 	memset(wqe_mem, 0, num_wqes * sizeof (netlev_wqe_t));
 
 	// alloc memory buffer for wqes
-	dma_mem = memalign(dma_align, data_size);
+	dma_mem = timeit("memalign2", memalign(dma_align, data_size));
 	if (!dma_mem) {
 		log(lsERROR, "memalign failed");
 		goto error_dma;
@@ -267,7 +268,7 @@ int netlev_init_conn_mem(struct netlev_conn *conn)
 	in.pd = conn->dev->pd;
 	dev_mem->mr = ibv_exp_reg_mr(&in);
 #else
-	dev_mem->mr = ibv_reg_mr(conn->dev->pd, dma_mem, data_size, NETLEV_MEM_ACCESS_PERMISSION);
+	dev_mem->mr = (struct ibv_mr *)timeit("ibv_reg_mr", ibv_reg_mr(conn->dev->pd, dma_mem, data_size, NETLEV_MEM_ACCESS_PERMISSION));
 #endif
 
 
@@ -397,7 +398,7 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 	uint32_t cqe_num;
 	bool wqes_reduced = false;
 
-	conn = (netlev_conn_t*) calloc(1, sizeof(netlev_conn_t));
+	conn = (netlev_conn_t*)timeit("calloc",  calloc(1, sizeof(netlev_conn_t)));
 	if (!conn) {
 		log(lsERROR,"allocate conn failed");
 		if (rdma_destroy_id(cm_id)){
@@ -413,7 +414,7 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 	INIT_LIST_HEAD(&conn->backlog);
 	INIT_LIST_HEAD(&conn->list);
 
-	if (netlev_init_conn_mem(conn) != 0) {
+	if (timeit("netlev_init_conn_mem", netlev_init_conn_mem(conn)) != 0) {
 		log(lsERROR, "failed to init connection");
 		pthread_mutex_destroy(&conn->lock);
 		if (rdma_destroy_id(cm_id)){
@@ -434,12 +435,12 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 			    " Avoid this warning by changing mapred.rdma.wqe.per.conn\n", wqes_perconn);
 	}
 
-	conn->cq = ibv_create_cq(dev->ibv_ctx, cqe_num, NULL, dev->cq_channel, 0);
+	conn->cq = (struct ibv_cq *)timeit("ibv_create_cq", ibv_create_cq(dev->ibv_ctx, cqe_num, NULL, dev->cq_channel, 0));
 	if (!conn->cq) {
 		throw new UdaException("ibv_create_cq failed");
 	}
 
-	if (ibv_req_notify_cq(conn->cq, 0) != 0) {
+	if (timeit("ibv_req_notify_cq", ibv_req_notify_cq(conn->cq, 0)) != 0) {
 		throw new UdaException("ibv_req_notify failed");
 	}
 
@@ -461,7 +462,7 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 		qp_init_attr.cap.max_send_sge = dev->max_sge - 1;
 	}
 
-	if (rdma_create_qp(conn->cm_id, dev->pd, &qp_init_attr) != 0) {
+	if (timeit("rdma_create_qp", rdma_create_qp(conn->cm_id, dev->pd, &qp_init_attr)) != 0) {
 	    // log(lsINFO, "rdma_create_qp failed 1, Try again: max_inline=%d", qp_init_attr.cap.max_inline_data);
 	    /* if device does not support the requested inline size, try again with what the device can do*/
 	    qp_init_attr.cap.max_inline_data = 0;
@@ -481,7 +482,7 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 	conn->bad_conn = false;
 	conn->received_counter = 0;
 	conn->qp_hndl = conn->cm_id->qp;
-	if (ibv_query_qp (conn->qp_hndl, &qp_attr, 12, &qp_init_attr)){
+	if (timeit("ibv_query_qp", ibv_query_qp (conn->qp_hndl, &qp_attr, 12, &qp_init_attr))) {
 		log(lsERROR,"ibv query failed - %m");
 		netlev_conn_free(conn);
 		return NULL;
@@ -496,8 +497,8 @@ struct netlev_conn *netlev_conn_alloc(netlev_dev_t *dev, struct rdma_cm_id *cm_i
 	for (unsigned int i = 0; i < wqes_perconn; ++i) {
 		netlev_wqe_t *wqe = conn->mem->wqe_start + i;
 		wqe->data = (char *)(conn->mem->wqe_buff_start) + (i * sizeof(netlev_msg_t));
-		init_wqe_recv(wqe, sizeof(netlev_msg_t), conn->mem->mr->lkey, conn);
-		if (ibv_post_recv(conn->qp_hndl, &wqe->desc.rr, &bad_wr) != 0) {
+		timeit_void("init_wqe_recv", init_wqe_recv(wqe, sizeof(netlev_msg_t), conn->mem->mr->lkey, conn));
+		if (timeit("ibv_post_recv", ibv_post_recv(conn->qp_hndl, &wqe->desc.rr, &bad_wr)) != 0) {
 			log(lsERROR, "ibv_post_recv failed");
 			netlev_conn_free(conn);
 			throw new UdaException("ibv_post_recv failed");
@@ -592,7 +593,7 @@ void init_wqe_rdmaw(struct ibv_send_wr *send_wr, struct ibv_sge *sg, int len,
 
 int netlev_event_add(int poll_fd, int fd, int events,
 		event_handler_t handler, void *data,
-		struct list_head *head)
+		struct list_head *head, const char *name)
 {
 	progress_event_t *pevent;
 	struct epoll_event ev;
@@ -603,6 +604,7 @@ int netlev_event_add(int poll_fd, int fd, int events,
 	pevent->fd = fd;
 	pevent->data = data;
 	pevent->handler = handler;
+	memcpy(pevent->handler_name, name, strlen(name));
 
 	ev.events = events;
 	ev.data.ptr = pevent;
@@ -639,9 +641,9 @@ struct netlev_conn* netlev_init_conn(struct rdma_cm_event *event, struct netlev_
 	struct netlev_conn *conn = NULL;
 	struct rdma_conn_param conn_param;
 	struct connreq_data xdata;
-	int ret;
+	unsigned long ret;
 
-	conn = netlev_conn_alloc(dev, event->id);
+	conn = (struct netlev_conn *)timeit("netlev_conn_alloc", netlev_conn_alloc(dev, event->id));
 	if (!conn) {
 		goto err_alloc_dev;
 	}
@@ -661,9 +663,9 @@ struct netlev_conn* netlev_init_conn(struct rdma_cm_event *event, struct netlev_
 	conn_param.private_data_len = sizeof(xdata);
 
 	/* accept the connection */
-	ret = rdma_accept(conn->cm_id, &conn_param);
+	ret = (uintptr_t)timeit("rdma_accept", rdma_accept(conn->cm_id, &conn_param));
 	if (ret != 0) {
-		log(lsERROR, "rdma_accept failed ret %d errno %d cm_id %p", ret, errno, conn->cm_id);
+		log(lsERROR, "rdma_accept failed ret %d errno %d conn->cm_id %p event->id", ret, errno, conn->cm_id, event->id);
 		goto err_rdma_conn;
 	}
 	return conn;
@@ -683,14 +685,14 @@ struct netlev_conn* netlev_conn_established(struct rdma_cm_event *event, struct 
 	struct netlev_conn *conn;
 	conn = netlev_conn_find_by_cm_id(event->id, head);
 	if (!conn) {
-		log(lsERROR, "cma_id=%x qp_num=%d not found",
+		log(lsERROR, "cma_id=%p qp_num=%d not found",
 				event->id, event->id->qp->qp_num);
 		throw new UdaException("event-id was not found");
 		return NULL;
 	}
 
 	conn->state = NETLEV_CONN_READY;
-	output_stdout("A connection is fully ready conn (%p) on cma_id=%x), ip(%x)", conn, conn->cm_id, conn->peerIPAddr);
+	output_stdout("A connection is fully ready conn (%p) on cma_id=%p), ip(%x)", conn, conn->cm_id, conn->peerIPAddr);
 	return conn;
 }
 
@@ -736,7 +738,7 @@ struct netlev_conn* netlev_conn_find_by_cm_id(struct rdma_cm_id *cm_id, struct l
 void netlev_disconnect(struct netlev_conn *conn)
 {
 	if (conn) {
-		rdma_disconnect(conn->cm_id);
+		(void)timeit("rdma_disconnect", rdma_disconnect(conn->cm_id));
 		netlev_conn_free(conn);
 	}
 }

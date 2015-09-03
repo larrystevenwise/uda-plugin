@@ -143,7 +143,7 @@ static void client_cq_handler(progress_event_t *pevent, void *data)
 	ibv_ack_cq_events(cq, 1);
 
 	do {
-		ne = ibv_poll_cq(cq, 1, &desc);
+		ne = (uintptr_t)timeit("ibv_poll_cq", ibv_poll_cq(cq, 1, &desc));
 
 		if ( ne < 0) {
 			log(lsERROR, "ibv_poll_cq failed ne=%d, (errno=%d %m)", ne, errno);
@@ -183,7 +183,7 @@ static void client_cq_handler(progress_event_t *pevent, void *data)
 						netlev_wqe_t *wqe = (netlev_wqe_t *) (long2ptr(desc.wr_id));
 						if (wqe) {
 							log(lsTRACE, "got %s cq event.", netlev_stropcode(desc.opcode));
-							client_comp_ibv_recv(wqe);
+							timeit_void("client_comp_ibv_recv", client_comp_ibv_recv(wqe));
 						}
 						else {
 							log(lsERROR, "got %s cq event with NULL wqe", netlev_stropcode(desc.opcode));
@@ -207,7 +207,7 @@ static void client_cq_handler(progress_event_t *pevent, void *data)
 	} while (ne);
 
 error_event:
-	if (ibv_req_notify_cq(cq, 0) != 0) {
+	if (timeit("ibv_req_notify_cq", ibv_req_notify_cq(cq, 0)) != 0) {
 		log(lsERROR,"ibv_req_notify_cq failed");
 	}
 
@@ -469,7 +469,7 @@ RdmaClient::~RdmaClient()
 
 void RdmaClient::register_mem(struct memory_pool *mem_pool, double_buffer_t buffers)
 {
-	map_ib_devices(&ctx, client_cq_handler, (void**)&mem_pool->mem, mem_pool->total_size);
+	map_ib_devices(&ctx, client_cq_handler, (void**)&mem_pool->mem, mem_pool->total_size, "client_cq_handler");
 
 	int rc = split_mem_pool_to_pairs(mem_pool, buffers);
 	if (rc) {
