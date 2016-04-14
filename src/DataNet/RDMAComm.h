@@ -14,6 +14,9 @@
  ** either express or implied. See the License for the specific language
  ** governing permissions and  limitations under the License.
  **
+ ** This file has been modified by Chelsio Communications to enable iWARP.
+ ** For any queries regarding the changes made, please contact
+ ** support@chelsio.com<mailto:support@chelsio.com>.
  **
  */
 
