@@ -281,8 +281,10 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 
 			if (!dev) {
 				log(lsERROR, "device not found");
-				//TODO: replace this exception with (verbs) rdma_reject();
-				throw new UdaException("device not found");
+				if (rdma_reject(event->id, NULL, 0) != 0) {
+					log(lsERROR, "rdma_reject failed");
+				}
+				return;
 			}
 			else {
 				log(lsDEBUG, "found dev=%x", dev);
