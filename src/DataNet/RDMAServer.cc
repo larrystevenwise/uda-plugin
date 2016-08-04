@@ -281,7 +281,7 @@ static void server_cm_handler(progress_event_t *pevent, void *data)
 
 			if (!dev) {
 				log(lsERROR, "device not found");
-				if (rdma_reject(event->id, NULL, 0) != 0) {
+				if (rdma_reject(cm_event->id, NULL, 0) != 0) {
 					log(lsERROR, "rdma_reject failed");
 				}
 				return;
